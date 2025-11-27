@@ -1,23 +1,26 @@
 import multer from "multer";
 import path from "path";
 import { fileURLToPath } from "url";
+import { v4 as uuidv4 } from "uuid"; 
 
-// Fix __dirname for ES Modules
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Storage settings
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const dest = path.join(__dirname, "../", "storage", "assignment");
-    
     cb(null, dest);
   },
 
   filename: (req, file, cb) => {
-    cb(null, file.originalname); 
+    const ext = path.extname(file.originalname); 
+    const uniqueName = `${uuidv4()}${ext}`;
+    cb(null, uniqueName);
   },
 });
+
 
 const filterFile = (req, file, cb) => {
   if (file.mimetype !== "application/pdf") {
@@ -26,13 +29,16 @@ const filterFile = (req, file, cb) => {
   cb(null, true);
 };
 
-// Final Multer config
 const upload = multer({
   storage,
   fileFilter: filterFile,
   limits: {
-    fileSize: 10 * 1024 * 1024,
+    fileSize: 10 * 1024 * 1024, 
   },
 });
+
+
+export const uploadSingle = upload.single("assignment");
+export const uploadMultiple = upload.array("assignments", 10);
 
 export default upload;
