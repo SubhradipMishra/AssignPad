@@ -12,8 +12,9 @@ import {
   Select,
   Input,
   Tabs,
+  Space,
 } from "antd";
-import { FilePdfOutlined, UploadOutlined } from "@ant-design/icons";
+import { FilePdfOutlined, UploadOutlined, DeleteOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import Context from "../../utils/Context";
 import axios from "axios";
@@ -32,6 +33,8 @@ const statusColors = {
   rejected: "red",
 };
 
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
 const StudentAssignment = () => {
   const navigate = useNavigate();
   const { session, sessionLoading } = useContext(Context);
@@ -39,13 +42,26 @@ const StudentAssignment = () => {
   const [loading, setLoading] = useState(false);
   const [assignments, setAssignments] = useState([]);
   const [professors, setProfessors] = useState([]);
-  const [selectedProfessor, setSelectedProfessor] = useState(null);
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [type, setType] = useState("assignment");
 
+  // Single Upload States
+  const [singleTitle, setSingleTitle] = useState("");
+  const [singleDescription, setSingleDescription] = useState("");
+  const [singleType, setSingleType] = useState("assignment");
+  const [singleProfessor, setSingleProfessor] = useState(null);
   const [singleFile, setSingleFile] = useState(null);
+
+  // Bulk Upload States
+  const [bulkTitle, setBulkTitle] = useState("");
+  const [bulkDescription, setBulkDescription] = useState("");
+  const [bulkType, setBulkType] = useState("assignment");
+  const [bulkProfessor, setBulkProfessor] = useState(null);
   const [bulkFiles, setBulkFiles] = useState([]);
+
+   useEffect(() => {
+      if (!sessionLoading && (!session || session.role !== "student")) {
+        navigate("/");
+      }
+    }, [session, sessionLoading, navigate]);
 
   // Load professors
   const loadProfessors = async () => {
@@ -78,62 +94,164 @@ const StudentAssignment = () => {
     }
   }, [sessionLoading]);
 
-  // Form validation
-  const validateForm = (files) => {
-    if (!selectedProfessor) return toast.error("Select professor");
-    if (!title.trim()) return toast.error("Enter title");
-    if (!description.trim()) return toast.error("Enter description");
-    if (!files || files.length === 0) return toast.error("Select file(s)");
+  const validateForm = (title, description, professor, files) => {
+    if (!professor) {
+      toast.error("Select professor");
+      return false;
+    }
+    if (!title.trim()) {
+      toast.error("Enter title");
+      return false;
+    }
+    if (!description.trim()) {
+      toast.error("Enter description");
+      return false;
+    }
+    if (!files || (Array.isArray(files) && files.length === 0)) {
+      toast.error("Select file(s)");
+      return false;
+    }
     return true;
   };
 
-  // Upload handler
-  const handleUpload = async (files) => {
-    if (!validateForm(files)) return;
+  const isPdfAndSizeOk = (file) => {
+    if (!file) return false;
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    if (!isPdf) {
+      toast.error(`${file.name} is not a PDF`);
+      return false;
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      toast.error(`${file.name} exceeds 10MB`);
+      return false;
+    }
+    return true;
+  };
+
+  // --- SINGLE FILE UPLOAD ---
+  const submitSingle = async () => {
+  const filesToSend = singleFile ? [singleFile] : [];
+  if (!validateForm(singleTitle, singleDescription, singleProfessor, filesToSend)) return;
+  if (!isPdfAndSizeOk(singleFile)) return;
+
+  const formData = new FormData();
+  formData.append("assignment", singleFile);
+  formData.append("title", singleTitle);
+  formData.append("description", singleDescription);
+  formData.append("category", singleType);
+  formData.append("submittedTo", singleProfessor); // professor.id is correct now
+
+  // Correct logging
+  for (let p of formData.entries()) {
+    console.log(p[0], p[1]);
+  }
+
+  try {
+    setLoading(true);
+
+    await axios.post(
+      "http://localhost:4040/assignment/upload",
+      formData,
+      {
+        withCredentials: true,
+        headers: { "Content-Type": "multipart/form-data" },
+      }
+    );
+
+    toast.success("Uploaded Successfully");
+
+    setSingleFile(null);
+    setSingleTitle("");
+    setSingleDescription("");
+    setSingleType("assignment");
+    setSingleProfessor(null);
+
+    loadAssignments();
+  } catch (err) {
+    console.log("error",err.meesage);
+    toast.error("Upload failed");
+  } finally {
+    setLoading(false);
+  }
+};
+
+
+  // --- BULK UPLOAD ---
+  const submitBulk = async () => {
+    if (!validateForm(bulkTitle, bulkDescription, bulkProfessor, bulkFiles)) return;
+
+    for (const f of bulkFiles) {
+      if (!isPdfAndSizeOk(f)) return;
+    }
 
     const formData = new FormData();
-    for (let f of files) {
-      if (f.type !== "application/pdf") return toast.error("Only PDF allowed");
-      if (f.size > 10 * 1024 * 1024) return toast.error("Max size 10MB each");
-      formData.append("assignments", f);
-    }
+    bulkFiles.forEach((file) => formData.append("assignments", file)); // correct field
 
-    formData.append("title", title);
-    formData.append("description", description);
-    formData.append("category", type);
-
-    // Only append professor ID if selected
-    if (selectedProfessor) {
-      formData.append("submittedTo", selectedProfessor);
-    }
+    formData.append("title", bulkTitle);
+    formData.append("description", bulkDescription);
+    formData.append("category", bulkType);
+    formData.append("submittedTo", bulkProfessor);
 
     try {
       setLoading(true);
-      const url = files.length === 1
-        ? "http://localhost:4040/assignment/upload"
-        : "http://localhost:4040/assignment/upload-multiple";
 
-      await axios.post(url, formData, { withCredentials: true });
+      await axios.post("http://localhost:4040/assignment/upload-multiple", formData, {
+        withCredentials: true,
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
       toast.success("Uploaded Successfully");
 
-      // Reset files
-      if (files.length === 1) setSingleFile(null);
-      else setBulkFiles([]);
+      // Reset
+      setBulkFiles([]);
+      setBulkTitle("");
+      setBulkDescription("");
+      setBulkType("assignment");
+      setBulkProfessor(null);
+
       loadAssignments();
-    } catch {
+    } catch (err) {
       toast.error("Upload failed");
     } finally {
       setLoading(false);
     }
   };
 
-  // Table columns (show professor ID)
+  // Upload handlers
+  const handleSingleBeforeUpload = (file) => {
+    setSingleFile(file.originFileObj || file);
+    return false;
+  };
+
+  const handleBulkBeforeUpload = (file) => {
+    const realFile = file.originFileObj || file;
+    setBulkFiles((prev) => {
+      const exists = prev.some((f) => f.name === realFile.name && f.size === realFile.size);
+      if (exists) return prev;
+      return [...prev, realFile];
+    });
+    return false;
+  };
+
+  const handleBulkRemove = (index) => {
+    setBulkFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const columns = [
     { title: "Title", dataIndex: "title", render: (t) => <b>{t}</b> },
-    { title: "Submitted To (Professor ID)", dataIndex: "submittedTo", render: (t) => t?._id || t },
+    { title: "Submitted To (Professor ID)", dataIndex: "submittedTo", render: (t) => t?.id || t },
     { title: "Type", dataIndex: "category" },
-    { title: "Status", dataIndex: "status", render: (s) => <Tag color={statusColors[s]}>{s.toUpperCase()}</Tag> },
-    { title: "Actions", render: (r) => <Button onClick={() => navigate(`/student/assignments/${r._id}`)}>View</Button> },
+    {
+      title: "Status",
+      dataIndex: "status",
+      render: (s) => <Tag color={statusColors[s]}>{s.toUpperCase()}</Tag>,
+    },
+    {
+      title: "Actions",
+      render: (r) => (
+        <Button onClick={() => navigate(`/student/assignments/${r._id}`)}>View</Button>
+      ),
+    },
   ];
 
   if (!session || sessionLoading) return <Skeleton active />;
@@ -141,61 +259,66 @@ const StudentAssignment = () => {
   return (
     <Layout>
       <Content className="p-8">
-        {/* Shared Fields */}
-        <Card className="shadow-lg p-6 mb-6">
-          <Select value={type} onChange={setType} className="w-full mb-3">
-            <Option value="assignment">Assignment</Option>
-            <Option value="research paper">Research Paper</Option>
-            <Option value="thesis">Thesis</Option>
-          </Select>
-
-          <Input
-            placeholder="Enter Title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="mb-3"
-          />
-
-          <TextArea
-            rows={3}
-            placeholder="Enter Description"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            className="mb-3"
-          />
-
-          <Select
-            placeholder="Select Professor"
-            value={selectedProfessor}
-            onChange={setSelectedProfessor}
-            className="w-full"
-          >
-            {professors.map((p) => (
-              <Option key={p.id} value={p.id}>
-                {p.name} ({p.department})
-              </Option>
-            ))}
-          </Select>
-        </Card>
-
-        {/* Tabs for Single/Bulk Upload */}
         <Tabs defaultActiveKey="single">
-          {/* Single Upload Tab */}
+          {/* SINGLE */}
           <TabPane tab="Single Upload" key="single">
             <Card className="shadow-lg p-6 mb-6">
+              <Select value={singleType} onChange={setSingleType} className="w-full mb-3">
+                <Option value="assignment">Assignment</Option>
+                <Option value="research paper">Research Paper</Option>
+                <Option value="thesis">Thesis</Option>
+              </Select>
+
+              <Input
+                placeholder="Enter Title"
+                value={singleTitle}
+                onChange={(e) => setSingleTitle(e.target.value)}
+                className="mb-3"
+              />
+
+              <TextArea
+                rows={3}
+                placeholder="Enter Description"
+                value={singleDescription}
+                onChange={(e) => setSingleDescription(e.target.value)}
+                className="mb-3"
+              />
+
+              <Select
+                placeholder="Select Professor"
+                value={singleProfessor}
+                onChange={setSingleProfessor}
+                className="w-full mb-3"
+              >
+                {professors.map((p) => (
+                  <Option key={p.id} value={p.id}>
+                    {p.name} ({p.department})
+                  </Option>
+                ))}
+              </Select>
+
               <Upload
-                beforeUpload={(file) => { setSingleFile(file); return false; }}
+                beforeUpload={handleSingleBeforeUpload}
+                showUploadList={false}
                 maxCount={1}
               >
                 <Button icon={<UploadOutlined />}>Select Single PDF</Button>
               </Upload>
+
               {singleFile && (
-                <p className="flex items-center gap-2 mt-2">
-                  <FilePdfOutlined /> {singleFile.name}
-                </p>
+                <div className="flex items-center gap-2 mt-2">
+                  <FilePdfOutlined />
+                  <span>{singleFile.name}</span>
+                  <Button
+                    type="text"
+                    icon={<DeleteOutlined />}
+                    onClick={() => setSingleFile(null)}
+                  />
+                </div>
               )}
+
               <Button
-                onClick={() => handleUpload(singleFile ? [singleFile] : [])}
+                onClick={submitSingle}
                 loading={loading}
                 className="!bg-blue-600 !text-white mt-4"
               >
@@ -204,26 +327,65 @@ const StudentAssignment = () => {
             </Card>
           </TabPane>
 
-          {/* Bulk Upload Tab */}
+          {/* BULK */}
           <TabPane tab="Bulk Upload" key="bulk">
             <Card className="shadow-lg p-6 mb-6">
-              <Upload
-                multiple
-                beforeUpload={(file) => { setBulkFiles((prev) => [...prev, file]); return false; }}
+              <Select value={bulkType} onChange={setBulkType} className="w-full mb-3">
+                <Option value="assignment">Assignment</Option>
+                <Option value="research paper">Research Paper</Option>
+                <Option value="thesis">Thesis</Option>
+              </Select>
+
+              <Input
+                placeholder="Enter Title"
+                value={bulkTitle}
+                onChange={(e) => setBulkTitle(e.target.value)}
+                className="mb-3"
+              />
+
+              <TextArea
+                rows={3}
+                placeholder="Enter Description"
+                value={bulkDescription}
+                onChange={(e) => setBulkDescription(e.target.value)}
+                className="mb-3"
+              />
+
+              <Select
+                placeholder="Select Professor"
+                value={bulkProfessor}
+                onChange={setBulkProfessor}
+                className="w-full mb-3"
               >
+                {professors.map((p) => (
+                  <Option key={p.id} value={p.id}>
+                    {p.name} ({p.department})
+                  </Option>
+                ))}
+              </Select>
+
+              <Upload multiple beforeUpload={handleBulkBeforeUpload} showUploadList={false}>
                 <Button icon={<UploadOutlined />}>Select Multiple PDFs</Button>
               </Upload>
+
               {bulkFiles.length > 0 && (
                 <div className="mt-2">
                   {bulkFiles.map((f, i) => (
-                    <p key={i} className="flex items-center gap-2">
-                      <FilePdfOutlined /> {f.name}
-                    </p>
+                    <Space key={i} className="mb-2">
+                      <FilePdfOutlined />
+                      <span>{f.name}</span>
+                      <Button
+                        type="text"
+                        icon={<DeleteOutlined />}
+                        onClick={() => handleBulkRemove(i)}
+                      />
+                    </Space>
                   ))}
                 </div>
               )}
+
               <Button
-                onClick={() => handleUpload(bulkFiles)}
+                onClick={submitBulk}
                 loading={loading}
                 className="!bg-red-600 !text-white mt-4"
               >
@@ -233,9 +395,8 @@ const StudentAssignment = () => {
           </TabPane>
         </Tabs>
 
-        {/* Assignments Table */}
         <Card className="shadow-md">
-          <Table dataSource={assignments} columns={columns} rowKey="_id" />
+          <Table dataSource={assignments} columns={columns} rowKey="id" />
         </Card>
 
         <ToastContainer />

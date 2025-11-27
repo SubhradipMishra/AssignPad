@@ -18,7 +18,6 @@ import {
   ExclamationCircleOutlined,
   CloseCircleOutlined,
   EyeOutlined,
-  EyeInvisibleOutlined,
 } from "@ant-design/icons";
 import { useParams, useNavigate } from "react-router-dom";
 import Context from "../../utils/Context";
@@ -49,48 +48,6 @@ const StudentAssignmentDetails = () => {
   const [assignment, setAssignment] = useState(null);
   const [showPdf, setShowPdf] = useState(true);
 
-  // Dynamic timeline based on assignment status
-  const getTimelineItems = () => {
-    if (!assignment) return [];
-    const base = [
-      {
-        color: "cyan",
-        dot: <ClockCircleOutlined style={{ color: "cyan" }} />,
-        children: "Assignment created",
-      },
-      {
-        color: "blue",
-        dot: <ExclamationCircleOutlined style={{ color: "blue" }} />,
-        children: "Submitted to Professor",
-      },
-    ];
-
-    switch (assignment.status) {
-      case "draft":
-        return [
-          ...base,
-          { color: "orange", dot: <ClockCircleOutlined />, children: "Draft saved" },
-        ];
-      case "submitted":
-        return [
-          ...base,
-          { color: "blue", dot: <ExclamationCircleOutlined />, children: "Waiting for review" },
-        ];
-      case "approved":
-        return [
-          ...base,
-          { color: "green", dot: <CheckCircleOutlined />, children: "Approved by Professor" },
-        ];
-      case "rejected":
-        return [
-          ...base,
-          { color: "red", dot: <CloseCircleOutlined />, children: "Rejected by Professor" },
-        ];
-      default:
-        return base;
-    }
-  };
-
   useEffect(() => {
     if (!sessionLoading && (!session || session.role !== "student")) {
       navigate("/");
@@ -113,6 +70,47 @@ const StudentAssignmentDetails = () => {
     };
     fetchDetails();
   }, [id]);
+
+  // Convert history to Timeline items
+  const getHistoryTimeline = () => {
+    if (!assignment?.history?.length) return [];
+
+    return assignment.history
+      .map((h) => ({
+        color: statusColors[h.status] || "gray",
+        dot: statusIcons[h.status] || <ClockCircleOutlined />,
+        children: (
+          <div className="p-2">
+            <p className="font-semibold text-gray-800">
+              {h.status.toUpperCase()}
+            </p>
+            <p className="text-gray-700">{h.message}</p>
+
+            {h.changedByName && (
+              <p className="text-sm text-gray-600 mt-1">
+                Changed By: <b>{h.changedByName}</b>
+              </p>
+            )}
+
+            {h.filePath && (
+              <a
+                href={h.filePath}
+                target="_blank"
+                rel="noreferrer"
+                className="text-red-600 underline text-sm mt-1 block"
+              >
+                View Attached File
+              </a>
+            )}
+
+            <p className="text-xs text-gray-500 mt-1">
+              {new Date(h.submittedDate).toLocaleString()}
+            </p>
+          </div>
+        ),
+      }))
+      .reverse();
+  };
 
   if (sessionLoading || loading) {
     return (
@@ -144,7 +142,6 @@ const StudentAssignmentDetails = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-red-50 to-gray-100 p-8 animate-fadeIn">
-
       <Button
         type="text"
         icon={<ArrowLeftOutlined />}
@@ -155,7 +152,6 @@ const StudentAssignmentDetails = () => {
       </Button>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-
         {/* LEFT — DETAILS */}
         <Card className="p-8 rounded-3xl shadow-2xl border border-gray-200 bg-gradient-to-br from-white to-red-50">
           <Title
@@ -171,12 +167,13 @@ const StudentAssignmentDetails = () => {
             size="middle"
             className="mb-8 rounded-xl border-red-300 bg-white shadow"
           >
-            <Descriptions.Item label="Type">{assignment.category}</Descriptions.Item>
+            <Descriptions.Item label="Type">
+              {assignment.category}
+            </Descriptions.Item>
 
             <Descriptions.Item label="Submitted To">
               {assignment.submittedTo?.fullname ||
                 assignment.submittedTo?.name ||
-                assignment.submittedTo ||
                 "N/A"}
             </Descriptions.Item>
 
@@ -214,17 +211,18 @@ const StudentAssignmentDetails = () => {
             </Descriptions.Item>
           </Descriptions>
 
+          {/* HISTORY LOG */}
           <Title level={4} className="!font-extrabold !text-gray-800 mb-4">
-            Activity Timeline
+            Assignment History
           </Title>
 
-          <Timeline
-            mode="left"
-            items={getTimelineItems()}
-            className="!border-l-4 !border-red-600 
-                       !rounded-xl !p-4 shadow-xl 
-                       bg-gradient-to-br from-white to-red-100"
-          />
+          <Card className="rounded-2xl shadow-xl border border-gray-200 p-4 bg-white">
+            {assignment.history?.length ? (
+              <Timeline items={getHistoryTimeline()} />
+            ) : (
+              <p className="text-gray-500">No history available.</p>
+            )}
+          </Card>
         </Card>
 
         {/* RIGHT — PDF VIEWER */}
